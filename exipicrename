@@ -1,0 +1,306 @@
+#!/bin/bash 
+
+# exipicrename
+
+# Purpose:
+# * Rename image files after their exif creation date and time
+# * use format YYYYmmdd_HHMMSS  (year in 4 digits,
+#   month, date, hour, minute, seconds in 2 digits)
+# * Also rename matching orf (raw) + xmp (metadata) files
+#   with this same new name
+
+###########################################################################
+##
+## Copyright 2017, Hella Breitkopf, http://www.unixwitch.de
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+###########################################################################
+
+# This script did do what I expected on Linux OpenSuse Tumbleweed, 2017-04
+# for picture files created with Olympus(TM) DSL(R|M) 
+# and some older point and shot cameras.
+# Other OS / cameras might need changes on the script
+# (e.g. your raw file name ending might be different 
+# -> see Variable rawsuffix1 and RAWSUFFIX2).
+
+# If there are images created with the same date+time (more than one
+# image per second) a counter to the name (avoid overwriting) will be added.
+# Alternativly set additional serial numbers (option -s)
+
+# Anyway, the script might not work as intended, files or directories might
+# be deleted or damaged, so please use backups and common sense.
+
+
+# Requires package "exiftool"
+# Requires package "dateutils" for dateconv
+# Requires sed
+
+# -------------------------------------------------------------------------
+### Functions
+
+function showhelp () {
+  printf "exipicrename [option] JPG-Files.jpg\n"
+  printf "  renames jpg-files and matching rawfiles + xmp-files\n\n"
+  printf "  -h      | --help          this help \n"
+  printf "  -r[raw] | --rawdir [raw]  save raw files to separate directory [defaultname raw] \n"
+  printf "  -s[3]   | --serial 3      attach a serial number [default 3 digits] \n"
+  printf "  -d      | --datedir       move files to directory with date in the format YYYY-mm-DD \n"
+  printf "  -k      | --kamera        attach camera model name \n"
+  printf "  -m      | --meta [meta]   fresh after import meta file [optionally to separate directory [meta]]\n"
+  printf "\n Do you have a BACKUP of your files? If not, do that before testing this script for the first time ...\n"
+}
+
+# -------------------------------------------------------------------------
+### Variables
+
+rawsuffix1=orf
+RAWSUFFIX2=ORF
+
+# parts of filenames
+# if there is also a raw file to this jpg, add :
+alsoraw=ar
+# if the file is a doublicate, mark it with:
+duplicatemarker=_DOUBLE_
+
+METAFILEWANTED=
+RAWDIR=
+DATEDIRCREATE=
+serialnumber=1  # serialnumber start with 1
+sndigits=3      # serialnumber default digits
+
+export LANG=en_US.utf8
+
+# -------------------------------------------------------------------------
+### START
+
+opt=$@
+
+# extract options and arguments to variables
+MYOPTS=`getopt -o r::s::dkm::h --long rawdir::,serial::,datedir,model,meta::,help -- $opt`
+eval set -- "$MYOPTS"
+
+while true; do
+	case "$1" in
+		-r|--rawdir)
+			RAWDIR="r"
+			case "$2" in
+				"") rawdirname='raw' ; shift 2 ;;
+				*) rawdirname=$2 ; shift 2 ;;
+			esac ;;
+		-s|--serial)
+			SERIAL="s"
+			case "$2" in
+				"") sndigits=3;shift 2 ;;
+				*) sndigits=$2;shift 2 ;;
+			esac ;;
+		-d|--datedir)
+			DATEDIRCREATE="d"; shift ;;
+		-k|--kamera)
+			MODEL="k"; shift ;;
+		-m|--meta)
+			METAFILEWANTED="m"
+			case $2 in
+				"") metadir='.';shift 2 ;;
+				*) metadir=$2;shift 2 ;;
+			esac ;;
+		-h|--help)
+			showhelp ; exit 0 ;;
+		--) shift ; break ;;
+		*) echo "internal error (while extracting options!)"; exit 1 ;;
+
+	esac
+done
+
+
+alljpg=$*
+
+for f in $alljpg; do
+
+if [[ ! -f $f ]]; then
+	echo "$f doesn't seem to exist or is no regular file"
+	continue
+fi
+
+datetime=`exiftool -p '$DateTimeOriginal' -d %Y%m%d_%H%M%S $f`
+date=`exiftool -p '$DateTimeOriginal' -d %Y-%m-%d $f`
+### a strange system bug gives the time unformated 
+### in the format 2016:06:10 11:13:58
+### if this happens we need to format that
+### to a nice date+time in other ways :-(
+### (it seems not to be the fault of exiftool
+### but somewhere in import with digikam, exiv2, kde library or such)
+
+### the problem exists if there are colons : in the output ...
+if [[ $datetime == *":"* ]]; then
+	echo timeformat not converted: $datetime
+	dateconfout=$(dateconv "$datetime" -i "%Y:%m:%d %H:%M:%S")
+	datetime=$(date -d"$dateconfout" +%Y%m%d_%H%M%S)
+	date=$(date -d"$dateconfout" +%Y-%m-%d)
+	echo timeformat converted: $datetime
+
+fi ; # end format $datetime
+
+curdir=`dirname $f`
+if [[ $DATEDIRCREATE == "d" ]]; then
+	newdir=$curdir/$date
+	echo "mkdir -p $newdir"
+	mkdir -p $newdir
+else
+	newdir=$curdir
+fi
+bn=`basename $f .jpg`
+bn=`basename $bn .JPG`
+origjpgname=$bn
+origname=`basename $bn .ar`
+
+rawdir=$newdir
+if [[ "$RAWDIR" == "r" ]]; then
+	rawdir=$newdir/$rawdirname
+fi
+
+newname=$datetime
+
+
+if [[ -f $origjpgname.JPG ]]; then
+	mv $origjpgname.JPG $origjpgname.jpg
+fi
+
+# check if there is already a file with this time-name which is not
+# the same file ( 2 cameras or serial shots in the same second)
+# (this can be avoided, if --serial is used)
+counter=0
+
+while ( [[ -f $newdir/$newname.$alsoraw.jpg ]] ) ; do
+	counter=$(( $counter + 1 ))
+	echo file $newdir/$newname.$alsoraw.jpg already there
+	diff $origjpgname.jpg $newdir/$newname.$alsoraw.jpg >/dev/null
+  if [[ $? -ne 0 ]]; then
+		newname=${datetime}_$counter
+		echo "newname: $newname counter: $counter"
+	else
+		echo file $origjpgname.JPG is a duplicate of $newdir/$newname.$alsoraw.jpg
+		newname=${datetime}${duplicatemarker}$counter
+	fi
+done
+
+while ( [[ -f $newdir/$newname.jpg ]] ) ; do
+	counter=$(( $counter + 1 ))
+	echo datei $newdir/$newname.jpg already there
+	diff $origjpgname.JPG $newdir/$newname.jpg >/dev/null
+  if [[ $? -ne 0 ]]; then
+		newname=${datetime}_$counter
+		echo "new name: ${newname}_${counter}"
+	else
+		echo file $origjpgname.JPG is a dublicate of $newdir/$newname.jpg
+		newname=${datetime}${duplicatemarker}$counter
+	fi
+done
+
+### attach a serial number (for complex operations
+### or if many serial shots were done) ....
+if [[ $SERIAL ]]; then
+	myserial=`printf "%0*d\n" ${sndigits} $serialnumber`
+	serialnumber=$(( serialnumber + 1 ))
+	newname="${newname}__${myserial}"
+fi
+
+
+# some shorter/nicer/more precise names for cameras I did use
+# if you e.g had a ut8000 and not a mju8000 you should consider
+# to change the replacement string ...
+
+if [[ $MODEL == "k" ]]; then
+	modelname=`exiftool -q -m -S -model $f | tr '[:upper:]' '[:lower:]' |
+	sed 's/model: //;
+	s/ut8000,st8000/mju8000/;
+	s/utough-8010/mju8010/;
+	s/e-m1markii/em1m2/;
+	s/u30d,s410d,u410d/mju410/;
+	s/[ ,]/-/g;
+	s/[^-a-z0-9]//g'
+	`
+	newname="${newname}__${modelname}"
+fi
+
+printf "$f -> $newname\n"
+
+# safe the orig meta information (xmp)
+if [[ $METAFILEWANTED ]]; then
+	mkdir -p $metadir
+
+	metafile=$metadir/$newname.meta0.xmp
+	if [[ -f $metafile ]]; then
+		echo "Metafile $metafile already there" > /dev/stderr
+	else
+		exiftool $origjpgname.jpg -o $metafile
+	fi
+fi
+
+if ( [[ $newname == $bn ]] || [[ $newname.$alsoraw == $bn ]] ); then
+	echo "file $f already correctly renamed" > /dev/stderr
+	continue
+fi
+
+
+if [[ -f $newdir/$newname.jpg ]]; then
+  echo "$newdir/$newname.jpg is already available ($origjpgname.jpg won't be renamed)" > /dev/stderr
+  continue
+fi
+
+
+# create a directory for raw pictures, if requested
+if [[ "$RAWDIR" == "r" ]]; then
+	mkdir -p $rawdir
+fi
+
+# if the directory for raw is not writable, end script
+if ! ( [[ -w $rawdir ]] && [[ -d $rawdir ]]); then
+	echo "directory $rawdir not writable" > /dev/stderr
+	exit 5 
+fi
+
+# finaly rename everything
+
+if [[ -f $origname.$rawsuffix1 ]];then
+	mv $origname.$rawsuffix1 $rawdir/$newname.$rawsuffix1
+	mv $origjpgname.jpg $newdir/$newname.$alsoraw.jpg
+	if [[ -f $origname.$rawsuffix1.xmp ]];then
+		mv $origname.$rawsuffix1.xmp $rawdir/$newname.$rawsuffix1.xmp
+	fi
+elif [[ -f $origname.$RAWSUFFIX2 ]];then
+	mv $origname.$RAWSUFFIX2 $rawdir/$newname.$rawsuffix1
+	mv $origjpgname.jpg $newdir/$newname.$alsoraw.jpg
+	if [[ -f $origname.$RAWSUFFIX2.xmp ]];then
+		mv $origname.$RAWSUFFIX2.xmp $rawdir/$newname.$rawsuffix1.xmp
+	fi
+else
+	mv $origjpgname.jpg $newdir/$newname.jpg
+fi
+
+if [[ -f $origname.JPG.xmp ]] ; then
+	mv $origname.JPG.xmp $newdir/$newname.jpg.xmp
+elif [[ -f $origname.jpg.xmp ]] ; then
+	mv $origname.jpg.xmp $newdir/$newname.jpg.xmp
+fi
+if [[ -f $origname.$alsoraw.jpg.xmp ]] ; then
+	mv $origname.$alsoraw.jpg.xmp $newdir/$newname.$alsoraw.jpg.xmp
+fi
+if [[ -f $origname.meta0.xmp ]] ; then
+	mv $origname.meta0.xmp $newdir/$newname.meta0.xmp
+fi
+
+done
+
+# -------------------------------------------------------------------------
+### THIS IS THE END
