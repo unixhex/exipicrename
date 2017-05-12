@@ -32,7 +32,7 @@
 # and some older point and shot cameras.
 # Other OS / cameras might need changes on the script
 # (e.g. your raw file name ending might be different 
-# -> see Variable rawsuffix1 and RAWSUFFIX2).
+# -> see variable rawsuffix1 and RAWSUFFIX2).
 
 # If there are images created with the same date+time (more than one
 # image per second) a counter to the name (avoid overwriting) will be added.
@@ -87,7 +87,7 @@ export LANG=en_US.utf8
 opt=$@
 
 # extract options and arguments to variables
-MYOPTS=`getopt -o r::s::dkm::h --long rawdir::,serial::,datedir,model,meta::,help -- $opt`
+MYOPTS=`getopt -o r::s::dkm::h --long rawdir::,serial::,datedir,model,meta::,debug,help -- $opt`
 eval set -- "$MYOPTS"
 
 while true; do
@@ -114,6 +114,8 @@ while true; do
 				"") metadir='.';shift 2 ;;
 				*) metadir=$2;shift 2 ;;
 			esac ;;
+		--debug)
+			DEBUG=true; shift ;;
 		-h|--help)
 			showhelp ; exit 0 ;;
 		--) shift ; break ;;
@@ -171,41 +173,23 @@ fi
 
 newname=$datetime
 
-
+# rename to small file endings
 if [[ -f $origjpgname.JPG ]]; then
+	if [[ -f $origjpgname.jpg ]]; then
+		echo "$origjpname.jpg is already available ($origjpname.JPG won't be renamed)" > /dev/stderr
+		continue
+	fi
 	mv $origjpgname.JPG $origjpgname.jpg
 fi
-
-# check if there is already a file with this time-name which is not
-# the same file ( 2 cameras or serial shots in the same second)
-# (this can be avoided, if --serial is used)
-counter=0
-
-while ( [[ -f $newdir/$newname.$alsoraw.jpg ]] ) ; do
-	counter=$(( $counter + 1 ))
-	echo file $newdir/$newname.$alsoraw.jpg already there
-	diff $origjpgname.jpg $newdir/$newname.$alsoraw.jpg >/dev/null
-  if [[ $? -ne 0 ]]; then
-		newname=${datetime}_$counter
-		echo "newname: $newname counter: $counter"
-	else
-		echo file $origjpgname.JPG is a duplicate of $newdir/$newname.$alsoraw.jpg
-		newname=${datetime}${duplicatemarker}$counter
+if [[ -f $origname.$RAWSUFFIX2 ]]; then
+	if [[ -f $origname.$rawsuffix1 ]]; then
+		echo "$origname.$rawsuffix1 is already available ($origname.$RAWSUFFIX2 won't be renamed)" > /dev/stderr
+		continue
 	fi
-done
+	mv $origname.$RAWSUFFIX2 $origname.$rawsuffix1
+fi
 
-while ( [[ -f $newdir/$newname.jpg ]] ) ; do
-	counter=$(( $counter + 1 ))
-	echo datei $newdir/$newname.jpg already there
-	diff $origjpgname.JPG $newdir/$newname.jpg >/dev/null
-  if [[ $? -ne 0 ]]; then
-		newname=${datetime}_$counter
-		echo "new name: ${newname}_${counter}"
-	else
-		echo file $origjpgname.JPG is a dublicate of $newdir/$newname.jpg
-		newname=${datetime}${duplicatemarker}$counter
-	fi
-done
+
 
 ### attach a serial number (for complex operations
 ### or if many serial shots were done) ....
@@ -221,7 +205,7 @@ fi
 # to change the replacement string ...
 
 if [[ $MODEL == "k" ]]; then
-	modelname=`exiftool -q -m -S -model $f | tr '[:upper:]' '[:lower:]' |
+	modelname=`exiftool -q -m -S -model $origjpgname.jpg | tr '[:upper:]' '[:lower:]' |
 	sed 's/model: //;
 	s/ut8000,st8000/mju8000/;
 	s/utough-8010/mju8010/;
@@ -231,9 +215,41 @@ if [[ $MODEL == "k" ]]; then
 	s/[^-a-z0-9]//g'
 	`
 	newname="${newname}__${modelname}"
+	if [[ $DEBUG ]];then echo "DEBUG: kamera model $modelname";fi
 fi
 
 printf "$f -> $newname\n"
+
+# check if there is already a file with this time-name which is not
+# the same file ( 2 cameras or serial shots in the same second)
+# (this can be avoided, if --serial is used)
+counter=0
+
+while ( [[ -f $newdir/$newname.$alsoraw.jpg ]] ) ; do
+	counter=$(( $counter + 1 ))
+	echo file $newdir/$newname.$alsoraw.jpg already there
+	diff $origjpgname.jpg $newdir/$newname.$alsoraw.jpg >/dev/null
+  if [[ $? -ne 0 ]]; then
+		newname=${datetime}_$counter
+		echo "newname: $newname counter: $counter"
+	else
+		echo file $origjpgname.jpg is a duplicate of $newdir/$newname.$alsoraw.jpg
+		newname=${datetime}${duplicatemarker}$counter
+	fi
+done
+
+while ( [[ -f $newdir/$newname.jpg ]] ) ; do
+	counter=$(( $counter + 1 ))
+	echo datei $newdir/$newname.jpg already there
+	diff $origjpgname.jpg $newdir/$newname.jpg >/dev/null
+  if [[ $? -ne 0 ]]; then
+		newname=${datetime}_$counter
+		echo "new name: ${newname}_${counter}"
+	else
+		echo file $origjpgname.jpg is a dublicate of $newdir/$newname.jpg
+		newname=${datetime}${duplicatemarker}$counter
+	fi
+done
 
 # safe the orig meta information (xmp)
 if [[ $METAFILEWANTED ]]; then
@@ -272,22 +288,19 @@ fi
 
 # finaly rename everything
 
+# a) we've got a matching raw file
 if [[ -f $origname.$rawsuffix1 ]];then
 	mv $origname.$rawsuffix1 $rawdir/$newname.$rawsuffix1
 	mv $origjpgname.jpg $newdir/$newname.$alsoraw.jpg
 	if [[ -f $origname.$rawsuffix1.xmp ]];then
 		mv $origname.$rawsuffix1.xmp $rawdir/$newname.$rawsuffix1.xmp
 	fi
-elif [[ -f $origname.$RAWSUFFIX2 ]];then
-	mv $origname.$RAWSUFFIX2 $rawdir/$newname.$rawsuffix1
-	mv $origjpgname.jpg $newdir/$newname.$alsoraw.jpg
-	if [[ -f $origname.$RAWSUFFIX2.xmp ]];then
-		mv $origname.$RAWSUFFIX2.xmp $rawdir/$newname.$rawsuffix1.xmp
-	fi
+# b) no matching raw file
 else
 	mv $origjpgname.jpg $newdir/$newname.jpg
 fi
 
+# are there matching xmp files? -> also rename them
 if [[ -f $origname.JPG.xmp ]] ; then
 	mv $origname.JPG.xmp $newdir/$newname.jpg.xmp
 elif [[ -f $origname.jpg.xmp ]] ; then
