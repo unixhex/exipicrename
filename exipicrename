@@ -57,6 +57,8 @@ function showhelp () {
   printf "  -s[3]   | --serial 3      attach a serial number [default 3 digits] \n"
   printf "  -d      | --datedir       move files to directory with date in the format YYYY-mm-DD \n"
   printf "  -k      | --kamera        attach camera model name \n"
+  printf "  -l      | --length        attach lens focal length \n"
+  printf "  -a      | --aperture      attach aperture\n"
   printf "  -m      | --meta [meta]   fresh after import meta file [optionally to separate directory [meta]]\n"
   printf "\n Do you have a BACKUP of your files? If not, do that before testing this script for the first time ...\n"
 }
@@ -87,7 +89,7 @@ export LANG=en_US.utf8
 opt=$@
 
 # extract options and arguments to variables
-MYOPTS=`getopt -o r::s::dkm::h --long rawdir::,serial::,datedir,model,meta::,debug,help -- $opt`
+MYOPTS=`getopt -o r::s::dkalm::h --long rawdir::,serial::,datedir,model,aperture,length,meta::,debug,help -- $opt`
 eval set -- "$MYOPTS"
 
 while true; do
@@ -106,6 +108,10 @@ while true; do
 			esac ;;
 		-d|--datedir)
 			DATEDIRCREATE="d"; shift ;;
+		-a|--aperture)
+			AP="a"; shift ;;
+		-l|--length)
+			LENGTH="l"; shift ;;
 		-k|--kamera)
 			MODEL="k"; shift ;;
 		-m|--meta)
@@ -217,6 +223,29 @@ if [[ $MODEL == "k" ]]; then
 	newname="${newname}__${modelname}"
 	if [[ $DEBUG ]];then echo "DEBUG: kamera model $modelname";fi
 fi
+
+
+if [[ $LENGTH == "l" ]]; then
+	length=`exiftool -q -m -S -focallength $origjpgname.jpg |
+	sed 's/FocalLength: //;
+	s/\.0//;
+	s/\./-/;
+	s/ //;'
+	`
+	newname="${newname}__${length}"
+	if [[ $DEBUG ]]; then echo "DEBUG: focal length $length";fi
+fi
+
+if [[ $AP == "a" ]]; then
+	aperture=`exiftool -q -m -S -aperture $origjpgname.jpg | 
+	sed 's/Aperture: /f/;
+	s/\.0//;
+	s/\./-/;' 
+	`
+	newname="${newname}__${aperture}"
+	if [[ $DEBUG ]]; then echo "DEBUG: aperture $aperture";fi
+fi
+
 
 printf "$f -> $newname\n"
 
